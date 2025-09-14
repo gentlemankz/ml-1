@@ -95,14 +95,14 @@ TOTAL_MEMORY=$(python3 -c "import torch; print(sum([torch.cuda.get_device_proper
 
 print_status "Detected $GPU_COUNT GPUs with total VRAM: $(($TOTAL_MEMORY / 1024 / 1024 / 1024))GB"
 
-# Optimize batch size for multi-GPU setup - OPTIMIZED FOR 3x RTX 5090 + 424GB RAM
+# Optimize batch size for multi-GPU setup - FIXED FOR 3x RTX 5090 + 424GB RAM
 if [ $GPU_COUNT -ge 3 ] && [ $TOTAL_MEMORY -gt 80000000000 ]; then
-    BATCH_SIZE=96   # OPTIMIZED: 32 per GPU for 3x RTX 5090 - balanced speed/safety
-    INPUT_SIZE=512  # HIGH RESOLUTION: Better accuracy for competition
-    EPOCHS=30       # Fewer epochs with larger batches = faster convergence
-    LR=2e-4         # Higher LR for larger effective batch size
-    GRAD_ACCUM=2    # Effective batch size = 192 (96 * 2)
-    print_status "🚀 BEAST MODE: 3x RTX 5090 + 424GB RAM! Using HIGH-PERFORMANCE settings: batch_size=$BATCH_SIZE, input_size=$INPUT_SIZE"
+    BATCH_SIZE=72   # FIXED: 24 per GPU for 3x RTX 5090 - prevents OOM during validation
+    INPUT_SIZE=448  # HIGH RESOLUTION: Better accuracy, safer memory usage
+    EPOCHS=25       # Fewer epochs with larger batches = faster convergence
+    LR=1.5e-4       # Optimal LR for effective batch size
+    GRAD_ACCUM=3    # Effective batch size = 216 (72 * 3)
+    print_status "🚀 BEAST MODE: 3x RTX 5090 + 424GB RAM! Using MEMORY-SAFE HIGH-PERFORMANCE settings: batch_size=$BATCH_SIZE, input_size=$INPUT_SIZE"
 elif [ $GPU_COUNT -eq 2 ]; then
     BATCH_SIZE=64   # REDUCED: 32 per GPU for 2 GPUs
     INPUT_SIZE=384  # Safe input size
