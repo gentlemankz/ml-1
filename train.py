@@ -425,8 +425,14 @@ class Trainer:
                 chunk_output = self.model(image_chunk, return_uncertainty=True)
                 chunk_loss = self.criterion(chunk_output, target_chunk)
 
+                # Clone tensors to prevent CUDAGraphs memory issues
+                chunk_output_cloned = {
+                    key: val.clone() if isinstance(val, torch.Tensor) else val
+                    for key, val in chunk_output.items()
+                }
+
                 # Collect chunk results
-                chunk_outputs.append(chunk_output)
+                chunk_outputs.append(chunk_output_cloned)
                 for key in chunk_losses:
                     if key in chunk_loss:
                         chunk_losses[key].append(chunk_loss[key].item())
