@@ -55,9 +55,7 @@ torchrun --nproc_per_node=3 \
     --use_bfloat16 \
     --use_compile \
     --gradient_accumulation_steps 3 \
-    --warmup_epochs 2 \
-    --save_every 5 \
-    --log_every 50
+    --warmup_epochs 2
 
 echo "✅ Training completed!"
 
