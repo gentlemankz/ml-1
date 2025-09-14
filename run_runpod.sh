@@ -95,23 +95,23 @@ TOTAL_MEMORY=$(python3 -c "import torch; print(sum([torch.cuda.get_device_proper
 
 print_status "Detected $GPU_COUNT GPUs with total VRAM: $(($TOTAL_MEMORY / 1024 / 1024 / 1024))GB"
 
-# Optimize batch size for multi-GPU setup
+# Optimize batch size for multi-GPU setup - OPTIMIZED FOR 3x RTX 5090 + 424GB RAM
 if [ $GPU_COUNT -ge 3 ] && [ $TOTAL_MEMORY -gt 80000000000 ]; then
-    BATCH_SIZE=384  # 128 per GPU for 3x RTX 5090 (32GB each)
-    INPUT_SIZE=512  # Higher resolution for better accuracy
-    EPOCHS=40       # More epochs for competition quality
-    LR=2e-4         # Optimized learning rate for larger batches
-    GRAD_ACCUM=2    # Gradient accumulation for effective batch size 768
-    print_status "3x RTX 5090 detected! Using optimized settings: batch_size=$BATCH_SIZE, input_size=$INPUT_SIZE"
+    BATCH_SIZE=96   # OPTIMIZED: 32 per GPU for 3x RTX 5090 - balanced speed/safety
+    INPUT_SIZE=512  # HIGH RESOLUTION: Better accuracy for competition
+    EPOCHS=30       # Fewer epochs with larger batches = faster convergence
+    LR=2e-4         # Higher LR for larger effective batch size
+    GRAD_ACCUM=2    # Effective batch size = 192 (96 * 2)
+    print_status "🚀 BEAST MODE: 3x RTX 5090 + 424GB RAM! Using HIGH-PERFORMANCE settings: batch_size=$BATCH_SIZE, input_size=$INPUT_SIZE"
 elif [ $GPU_COUNT -eq 2 ]; then
-    BATCH_SIZE=192  # 96 per GPU for 2 GPUs
-    INPUT_SIZE=448
+    BATCH_SIZE=64   # REDUCED: 32 per GPU for 2 GPUs
+    INPUT_SIZE=384  # Safe input size
     EPOCHS=35
-    LR=1.5e-4
-    GRAD_ACCUM=2
+    LR=1e-4
+    GRAD_ACCUM=4
     print_status "Dual GPU setup detected, using batch_size=$BATCH_SIZE"
 elif [ $TOTAL_MEMORY -gt 20000000000 ]; then
-    BATCH_SIZE=96   # Single high-memory GPU
+    BATCH_SIZE=48   # REDUCED: Single high-memory GPU
     INPUT_SIZE=384
     EPOCHS=40
     LR=1e-4
@@ -126,14 +126,14 @@ else
     print_status "Standard setup, using batch_size=$BATCH_SIZE"
 fi
 
-# Optimize workers for multi-GPU
+# Optimize workers for multi-GPU - MAXIMIZED FOR 96 vCPU AMD EPYC 9554
 NUM_WORKERS=$(nproc)
 if [ $GPU_COUNT -ge 3 ]; then
-    NUM_WORKERS=48  # 16 workers per GPU for 96 vCPU
+    NUM_WORKERS=24  # OPTIMIZED: 8 workers per GPU for 96 vCPU beast
 elif [ $GPU_COUNT -eq 2 ]; then
-    NUM_WORKERS=32  # 16 workers per GPU
+    NUM_WORKERS=16  # 8 workers per GPU
 elif [ $NUM_WORKERS -gt 16 ]; then
-    NUM_WORKERS=16  # Use more workers for single GPU
+    NUM_WORKERS=16  # Max 16 workers for single GPU
 else
     NUM_WORKERS=$(($NUM_WORKERS > 8 ? $NUM_WORKERS : 8))
 fi
@@ -152,6 +152,7 @@ if [ $GPU_COUNT -gt 1 ]; then
         --lr $LR \
         --input_size $INPUT_SIZE \
         --mixed_precision \
+        --use_bfloat16 \
         --learnable_weights \
         --gradient_accumulation_steps $GRAD_ACCUM \
         --use_compile \
@@ -168,6 +169,7 @@ else
         --lr $LR \
         --input_size $INPUT_SIZE \
         --mixed_precision \
+        --use_bfloat16 \
         --learnable_weights \
         --gradient_accumulation_steps $GRAD_ACCUM \
         --use_compile \
