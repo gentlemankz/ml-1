@@ -144,7 +144,7 @@ print_status "Using $NUM_WORKERS workers for data loading"
 if [ $GPU_COUNT -gt 1 ]; then
     print_status "Starting multi-GPU training with $GPU_COUNT GPUs..."
     torchrun --nproc_per_node=$GPU_COUNT --nnodes=1 train.py \
-        --model_name efficientnetv2_l \
+        --model_name tf_efficientnetv2_s \
         --pretrained \
         --batch_size $BATCH_SIZE \
         --num_workers $NUM_WORKERS \
@@ -160,7 +160,7 @@ if [ $GPU_COUNT -gt 1 ]; then
 else
     print_status "Starting single GPU training..."
     python3 train.py \
-        --model_name efficientnetv2_l \
+        --model_name tf_efficientnetv2_s \
         --pretrained \
         --batch_size $BATCH_SIZE \
         --num_workers $NUM_WORKERS \

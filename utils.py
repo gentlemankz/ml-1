@@ -354,7 +354,7 @@ def export_model_for_inference(model, save_path, input_size=(384, 384)):
         'model_state_dict': model.state_dict(),
         'model_config': {
             'input_size': input_size,
-            'model_name': getattr(model, 'model_name', 'efficientnetv2_l')
+            'model_name': getattr(model, 'model_name', 'tf_efficientnetv2_s')
         }
     }, save_path)
 

@@ -19,7 +19,7 @@ class CarInspectionModel(nn.Module):
     """
 
     def __init__(self,
-                 model_name='efficientnetv2_l',
+                 model_name='tf_efficientnetv2_s',
                  pretrained=True,
                  dropout=0.3,
                  num_weather_classes=4):
@@ -382,7 +382,7 @@ class MultiTaskLoss(nn.Module):
 
         return losses
 
-def create_model(model_name='efficientnetv2_l', pretrained=True, **kwargs):
+def create_model(model_name='tf_efficientnetv2_s', pretrained=True, **kwargs):
     """Factory function to create model"""
     return CarInspectionModel(model_name=model_name, pretrained=pretrained, **kwargs)
 

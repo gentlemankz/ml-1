@@ -30,7 +30,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train Car Inspection Model')
 
     # Model args
-    parser.add_argument('--model_name', type=str, default='efficientnetv2_l',
+    parser.add_argument('--model_name', type=str, default='tf_efficientnetv2_s',
                        help='Model architecture')
     parser.add_argument('--pretrained', action='store_true', default=True,
                        help='Use pretrained weights')
