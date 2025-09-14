@@ -405,9 +405,45 @@ class Trainer:
                 'weather_condition': batch['weather_condition'].to(self.device, non_blocking=True)
             }
 
-            # Forward pass
-            outputs = self.model(images, return_uncertainty=True)
-            losses = self.criterion(outputs, targets)
+            # Memory-efficient forward pass with smaller chunks for validation
+            batch_size = images.size(0)
+            chunk_size = min(16, batch_size)  # Process in smaller chunks to save memory
+
+            chunk_outputs = []
+            chunk_losses = {'total_loss': [], 'cleanliness_loss': [], 'damage_loss': [], 'weather_loss': []}
+
+            for i in range(0, batch_size, chunk_size):
+                end_idx = min(i + chunk_size, batch_size)
+                image_chunk = images[i:end_idx]
+                target_chunk = {
+                    'cleanliness_score': targets['cleanliness_score'][i:end_idx],
+                    'damage_score': targets['damage_score'][i:end_idx],
+                    'weather_condition': targets['weather_condition'][i:end_idx]
+                }
+
+                # Forward pass with uncertainty for chunk
+                chunk_output = self.model(image_chunk, return_uncertainty=True)
+                chunk_loss = self.criterion(chunk_output, target_chunk)
+
+                # Collect chunk results
+                chunk_outputs.append(chunk_output)
+                for key in chunk_losses:
+                    if key in chunk_loss:
+                        chunk_losses[key].append(chunk_loss[key].item())
+
+            # Combine chunks
+            outputs = {
+                'cleanliness_score': torch.cat([co['cleanliness_score'] for co in chunk_outputs]),
+                'damage_score': torch.cat([co['damage_score'] for co in chunk_outputs]),
+                'weather_logits': torch.cat([co['weather_logits'] for co in chunk_outputs]),
+                'overall_confidence': torch.cat([co.get('overall_confidence', torch.zeros_like(co['cleanliness_score'])) for co in chunk_outputs])
+            }
+
+            # Average chunk losses
+            losses = {}
+            for key in chunk_losses:
+                if chunk_losses[key]:
+                    losses[key] = sum(chunk_losses[key]) / len(chunk_losses[key])
 
             # Track losses
             for key in val_losses:
