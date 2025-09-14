@@ -223,7 +223,7 @@ model_path = sys.argv[1]
 print(f"Loading model from {model_path}")
 
 # Load checkpoint
-checkpoint = torch.load(model_path, map_location='cpu')
+checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
 
 # Create model
 model = CarInspectionModel()
