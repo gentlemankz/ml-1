@@ -454,7 +454,7 @@ class Trainer:
             # Track losses
             for key in val_losses:
                 if key in losses:
-                    val_losses[key].append(losses[key].item())
+                    val_losses[key].append(losses[key])
 
             # Collect outputs and targets for metrics
             all_outputs.append({
