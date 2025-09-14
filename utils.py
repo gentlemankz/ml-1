@@ -68,15 +68,36 @@ def calculate_metrics(outputs: List[Dict], targets: List[Dict]) -> Dict[str, flo
     Returns:
         Dictionary of calculated metrics
     """
-    # Concatenate all predictions and targets
-    all_cleanliness_pred = torch.cat([out['cleanliness_score'] for out in outputs])
-    all_damage_pred = torch.cat([out['damage_score'] for out in outputs])
-    all_weather_pred = torch.cat([out['weather_logits'] for out in outputs])
-    all_confidence = torch.cat([out.get('overall_confidence', torch.zeros_like(out['cleanliness_score'])) for out in outputs])
+    # Memory-efficient concatenation to avoid OOM on large validation sets
+    all_cleanliness_pred = []
+    all_damage_pred = []
+    all_weather_pred = []
+    all_confidence = []
 
-    all_cleanliness_true = torch.cat([tgt['cleanliness_score'] for tgt in targets])
-    all_damage_true = torch.cat([tgt['damage_score'] for tgt in targets])
-    all_weather_true = torch.cat([tgt['weather_condition'] for tgt in targets])
+    all_cleanliness_true = []
+    all_damage_true = []
+    all_weather_true = []
+
+    # Process in chunks to manage memory
+    for out, tgt in zip(outputs, targets):
+        all_cleanliness_pred.append(out['cleanliness_score'].cpu())
+        all_damage_pred.append(out['damage_score'].cpu())
+        all_weather_pred.append(out['weather_logits'].cpu())
+        all_confidence.append(out.get('overall_confidence', torch.zeros_like(out['cleanliness_score'])).cpu())
+
+        all_cleanliness_true.append(tgt['cleanliness_score'].cpu())
+        all_damage_true.append(tgt['damage_score'].cpu())
+        all_weather_true.append(tgt['weather_condition'].cpu())
+
+    # Concatenate after moving to CPU
+    all_cleanliness_pred = torch.cat(all_cleanliness_pred)
+    all_damage_pred = torch.cat(all_damage_pred)
+    all_weather_pred = torch.cat(all_weather_pred)
+    all_confidence = torch.cat(all_confidence)
+
+    all_cleanliness_true = torch.cat(all_cleanliness_true)
+    all_damage_true = torch.cat(all_damage_true)
+    all_weather_true = torch.cat(all_weather_true)
 
     # Convert to numpy
     cleanliness_pred = all_cleanliness_pred.numpy()
@@ -313,7 +334,7 @@ def export_model_for_inference(model, save_path, input_size=(384, 384)):
             dummy_input,
             onnx_path,
             export_params=True,
-            opset_version=11,
+            opset_version=17,  # Updated for PyTorch 2.8.0 compatibility
             input_names=['image'],
             output_names=['cleanliness_score', 'damage_score', 'weather_logits'],
             dynamic_axes={
@@ -346,7 +367,7 @@ def create_model_report(model, test_metrics, save_dir):
         'total_parameters': sum(p.numel() for p in model.parameters()),
         'trainable_parameters': sum(p.numel() for p in model.parameters() if p.requires_grad),
         'test_metrics': test_metrics,
-        'timestamp': np.datetime64('now').astype(str)
+        'timestamp': pd.Timestamp.now().isoformat()
     }
 
     # Save report

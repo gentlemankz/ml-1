@@ -89,36 +89,91 @@ print_status "Model creation test passed!"
 # Step 6: Start Training
 print_step "Starting model training..."
 
-# Training configuration for Paperspace
-BATCH_SIZE=32
-if python3 -c "import torch; print(torch.cuda.get_device_properties(0).total_memory)" 2>/dev/null | head -1 | awk '{print $1 > 20000000000}' | grep -q 1; then
-    BATCH_SIZE=48  # Larger batch for high-memory GPUs
-    print_status "High-memory GPU detected, using batch size $BATCH_SIZE"
+# Training configuration for 3x RTX 5090 setup
+GPU_COUNT=$(python3 -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo "1")
+TOTAL_MEMORY=$(python3 -c "import torch; print(sum([torch.cuda.get_device_properties(i).total_memory for i in range(torch.cuda.device_count())]))" 2>/dev/null || echo "0")
+
+print_status "Detected $GPU_COUNT GPUs with total VRAM: $(($TOTAL_MEMORY / 1024 / 1024 / 1024))GB"
+
+# Optimize batch size for multi-GPU setup
+if [ $GPU_COUNT -ge 3 ] && [ $TOTAL_MEMORY -gt 80000000000 ]; then
+    BATCH_SIZE=384  # 128 per GPU for 3x RTX 5090 (32GB each)
+    INPUT_SIZE=512  # Higher resolution for better accuracy
+    EPOCHS=40       # More epochs for competition quality
+    LR=2e-4         # Optimized learning rate for larger batches
+    GRAD_ACCUM=2    # Gradient accumulation for effective batch size 768
+    print_status "3x RTX 5090 detected! Using optimized settings: batch_size=$BATCH_SIZE, input_size=$INPUT_SIZE"
+elif [ $GPU_COUNT -eq 2 ]; then
+    BATCH_SIZE=192  # 96 per GPU for 2 GPUs
+    INPUT_SIZE=448
+    EPOCHS=35
+    LR=1.5e-4
+    GRAD_ACCUM=2
+    print_status "Dual GPU setup detected, using batch_size=$BATCH_SIZE"
+elif [ $TOTAL_MEMORY -gt 20000000000 ]; then
+    BATCH_SIZE=96   # Single high-memory GPU
+    INPUT_SIZE=384
+    EPOCHS=40
+    LR=1e-4
+    GRAD_ACCUM=4
+    print_status "High-memory single GPU detected, using batch_size=$BATCH_SIZE"
 else
-    print_status "Using batch size $BATCH_SIZE"
+    BATCH_SIZE=32   # Conservative settings
+    INPUT_SIZE=384
+    EPOCHS=40
+    LR=1e-4
+    GRAD_ACCUM=4
+    print_status "Standard setup, using batch_size=$BATCH_SIZE"
 fi
 
-# Get number of CPU cores for data loading
+# Optimize workers for multi-GPU
 NUM_WORKERS=$(nproc)
-if [ $NUM_WORKERS -gt 8 ]; then
-    NUM_WORKERS=8
+if [ $GPU_COUNT -ge 3 ]; then
+    NUM_WORKERS=48  # 16 workers per GPU for 96 vCPU
+elif [ $GPU_COUNT -eq 2 ]; then
+    NUM_WORKERS=32  # 16 workers per GPU
+elif [ $NUM_WORKERS -gt 16 ]; then
+    NUM_WORKERS=16  # Use more workers for single GPU
+else
+    NUM_WORKERS=$(($NUM_WORKERS > 8 ? $NUM_WORKERS : 8))
 fi
 
 print_status "Using $NUM_WORKERS workers for data loading"
 
-# Training command
-python3 train.py \
-    --model_name efficientnetv2_l \
-    --pretrained \
-    --batch_size $BATCH_SIZE \
-    --num_workers $NUM_WORKERS \
-    --epochs 30 \
-    --lr 1e-4 \
-    --input_size 384 \
-    --mixed_precision \
-    --learnable_weights \
-    --wandb_project car-inspection-runpod \
-    --experiment_name "hackathon_$(date +%Y%m%d_%H%M%S)"
+# Training command with multi-GPU support
+if [ $GPU_COUNT -gt 1 ]; then
+    print_status "Starting multi-GPU training with $GPU_COUNT GPUs..."
+    torchrun --nproc_per_node=$GPU_COUNT --nnodes=1 train.py \
+        --model_name efficientnetv2_l \
+        --pretrained \
+        --batch_size $BATCH_SIZE \
+        --num_workers $NUM_WORKERS \
+        --epochs $EPOCHS \
+        --lr $LR \
+        --input_size $INPUT_SIZE \
+        --mixed_precision \
+        --learnable_weights \
+        --gradient_accumulation_steps $GRAD_ACCUM \
+        --use_compile \
+        --wandb_project car-inspection-runpod-5090 \
+        --experiment_name "multi_gpu_${GPU_COUNT}x_$(date +%Y%m%d_%H%M%S)"
+else
+    print_status "Starting single GPU training..."
+    python3 train.py \
+        --model_name efficientnetv2_l \
+        --pretrained \
+        --batch_size $BATCH_SIZE \
+        --num_workers $NUM_WORKERS \
+        --epochs $EPOCHS \
+        --lr $LR \
+        --input_size $INPUT_SIZE \
+        --mixed_precision \
+        --learnable_weights \
+        --gradient_accumulation_steps $GRAD_ACCUM \
+        --use_compile \
+        --wandb_project car-inspection-runpod \
+        --experiment_name "single_gpu_$(date +%Y%m%d_%H%M%S)"
+fi
 
 TRAINING_EXIT_CODE=$?
 

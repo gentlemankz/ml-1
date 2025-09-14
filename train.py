@@ -8,6 +8,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from torch.cuda.amp import autocast, GradScaler
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+import os
 
 import wandb
 import numpy as np
@@ -39,20 +42,22 @@ def parse_args():
                        help='Dataset CSV file')
     parser.add_argument('--input_size', type=int, default=384,
                        help='Input image size')
-    parser.add_argument('--batch_size', type=int, default=16,
-                       help='Batch size')
-    parser.add_argument('--num_workers', type=int, default=4,
-                       help='Number of data loading workers')
+    parser.add_argument('--batch_size', type=int, default=32,
+                       help='Batch size per GPU')
+    parser.add_argument('--num_workers', type=int, default=8,
+                       help='Number of data loading workers per GPU')
 
     # Training args
-    parser.add_argument('--epochs', type=int, default=50,
+    parser.add_argument('--epochs', type=int, default=25,
                        help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-4,
-                       help='Learning rate')
+                       help='Base learning rate')
     parser.add_argument('--weight_decay', type=float, default=1e-5,
                        help='Weight decay')
-    parser.add_argument('--warmup_epochs', type=int, default=5,
-                       help='Warmup epochs')
+    parser.add_argument('--warmup_epochs', type=int, default=3,
+                       help='Warmup epochs for large batch training')
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
+                       help='Gradient accumulation steps for larger effective batch size')
 
     # Loss args
     parser.add_argument('--learnable_weights', action='store_true', default=True,
@@ -61,8 +66,12 @@ def parse_args():
     # Training settings
     parser.add_argument('--mixed_precision', action='store_true', default=True,
                        help='Use mixed precision training')
+    parser.add_argument('--use_bfloat16', action='store_true', default=False,
+                       help='Use bfloat16 instead of float16 for mixed precision (better on RTX 5090)')
     parser.add_argument('--gradient_clipping', type=float, default=1.0,
                        help='Gradient clipping value')
+    parser.add_argument('--use_compile', action='store_true', default=False,
+                       help='Use torch.compile for optimization (PyTorch 2.0+)')
 
     # Checkpointing
     parser.add_argument('--save_dir', type=str, default='models',
@@ -79,29 +88,77 @@ def parse_args():
     # Hardware
     parser.add_argument('--device', type=str, default='auto',
                        help='Device to use')
+    parser.add_argument('--local_rank', type=int, default=-1,
+                       help='Local rank for distributed training')
 
     return parser.parse_args()
 
 class Trainer:
     def __init__(self, args):
         self.args = args
+        self.setup_distributed()
         self.setup_device()
         self.setup_experiment()
         self.setup_data()
         self.setup_model()
         self.setup_training()
 
+    def setup_distributed(self):
+        """Setup distributed training"""
+        self.is_distributed = False
+        self.local_rank = self.args.local_rank
+        self.world_size = 1
+        self.rank = 0
+
+        if 'WORLD_SIZE' in os.environ:
+            self.is_distributed = True
+            self.local_rank = int(os.environ.get('LOCAL_RANK', 0))
+            self.world_size = int(os.environ['WORLD_SIZE'])
+            self.rank = int(os.environ['RANK'])
+
+            # Initialize with timeout and proper error handling
+            try:
+                dist.init_process_group(
+                    backend='nccl',
+                    timeout=torch.distributed.default_pg_timeout
+                )
+                torch.cuda.set_device(self.local_rank)
+
+                if self.rank == 0:
+                    print(f"🚀 Distributed training with {self.world_size} GPUs")
+            except Exception as e:
+                print(f"❌ Failed to initialize distributed training: {e}")
+                print("🔄 Falling back to single GPU training")
+                self.is_distributed = False
+                self.multi_gpu = False
+        elif torch.cuda.device_count() > 1:
+            self.is_distributed = False
+            self.multi_gpu = True
+            print(f"🚀 Multi-GPU training with {torch.cuda.device_count()} GPUs using DataParallel")
+        else:
+            self.multi_gpu = False
+            print("🚀 Single GPU training")
+
     def setup_device(self):
         """Setup training device"""
-        if self.args.device == 'auto':
+        if self.is_distributed:
+            self.device = torch.device(f'cuda:{self.local_rank}')
+        elif self.args.device == 'auto':
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
             self.device = torch.device(self.args.device)
 
-        print(f"🔥 Device: {self.device}")
-        if torch.cuda.is_available():
-            print(f"🚀 GPU: {torch.cuda.get_device_name(0)}")
-            print(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        if self.rank == 0 or not self.is_distributed:
+            print(f"🔥 Device: {self.device}")
+            if torch.cuda.is_available():
+                if self.is_distributed or hasattr(self, 'multi_gpu'):
+                    total_gpus = torch.cuda.device_count()
+                    total_memory = sum([torch.cuda.get_device_properties(i).total_memory for i in range(total_gpus)])
+                    print(f"🚀 GPUs: {total_gpus}x {torch.cuda.get_device_name(0)}")
+                    print(f"💾 Total GPU Memory: {total_memory / 1e9:.1f} GB")
+                else:
+                    print(f"🚀 GPU: {torch.cuda.get_device_name(0)}")
+                    print(f"💾 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 
     def setup_experiment(self):
         """Setup experiment tracking"""
@@ -116,14 +173,16 @@ class Trainer:
         self.save_dir = Path(self.args.save_dir) / self.experiment_name
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize W&B
-        wandb.init(
-            project=self.args.wandb_project,
-            name=self.experiment_name,
-            config=vars(self.args)
-        )
-
-        print(f"📊 Experiment: {self.experiment_name}")
+        # Initialize W&B only on rank 0
+        if self.rank == 0 or not self.is_distributed:
+            wandb.init(
+                project=self.args.wandb_project,
+                name=self.experiment_name,
+                config=vars(self.args)
+            )
+            print(f"📊 Experiment: {self.experiment_name}")
+        else:
+            wandb.init(mode='disabled')
 
     def setup_data(self):
         """Setup data loaders"""
@@ -157,30 +216,53 @@ class Trainer:
             dropout=self.args.dropout
         ).to(self.device)
 
-        # Count parameters
-        total_params = sum(p.numel() for p in self.model.parameters())
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        # Setup multi-GPU training
+        if self.is_distributed:
+            self.model = DDP(self.model, device_ids=[self.local_rank])
+        elif hasattr(self, 'multi_gpu') and self.multi_gpu:
+            self.model = nn.DataParallel(self.model)
 
-        print(f"📊 Model Parameters:")
-        print(f"   Total: {total_params:,}")
-        print(f"   Trainable: {trainable_params:,}")
+        # Count parameters
+        model_for_params = self.model.module if hasattr(self.model, 'module') else self.model
+        total_params = sum(p.numel() for p in model_for_params.parameters())
+        trainable_params = sum(p.numel() for p in model_for_params.parameters() if p.requires_grad)
+
+        if self.rank == 0 or not self.is_distributed:
+            print(f"📊 Model Parameters:")
+            print(f"   Total: {total_params:,}")
+            print(f"   Trainable: {trainable_params:,}")
 
         # Setup loss function
         self.criterion = MultiTaskLoss(
             learnable_weights=self.args.learnable_weights
         ).to(self.device)
 
-        # Log model to W&B
-        wandb.watch(self.model, log='all')
+        # Apply torch.compile for optimization (PyTorch 2.0+)
+        if self.args.use_compile and hasattr(torch, 'compile'):
+            print("🚀 Applying torch.compile optimization...")
+            model_to_compile = self.model.module if hasattr(self.model, 'module') else self.model
+            compiled_model = torch.compile(model_to_compile, mode='max-autotune')
+            if hasattr(self.model, 'module'):
+                self.model.module = compiled_model
+            else:
+                self.model = compiled_model
+
+        # Log model to W&B (only on rank 0)
+        if self.rank == 0 or not self.is_distributed:
+            wandb.watch(self.model, log='all')
 
     def setup_training(self):
         """Setup optimizer and scheduler"""
         print("⚙️ Setting up training...")
 
-        # Optimizer
+        # Optimizer - scale learning rate for distributed training
+        lr = self.args.lr
+        if self.is_distributed:
+            lr = self.args.lr * self.world_size  # Linear scaling rule
+
         self.optimizer = optim.AdamW(
             self.model.parameters(),
-            lr=self.args.lr,
+            lr=lr,
             weight_decay=self.args.weight_decay
         )
 
@@ -191,8 +273,19 @@ class Trainer:
             eta_min=1e-7
         )
 
-        # Mixed precision scaler
-        self.scaler = GradScaler() if self.args.mixed_precision else None
+        # Mixed precision scaler with bfloat16 support
+        if self.args.mixed_precision:
+            if self.args.use_bfloat16 and torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+                print("🚀 Using bfloat16 mixed precision (optimal for RTX 5090)")
+                self.amp_dtype = torch.bfloat16
+                self.scaler = None  # bfloat16 doesn't need gradient scaling
+            else:
+                print("🚀 Using float16 mixed precision")
+                self.amp_dtype = torch.float16
+                self.scaler = GradScaler()
+        else:
+            self.scaler = None
+            self.amp_dtype = torch.float32
 
         # Training state
         self.current_epoch = 0
@@ -225,36 +318,44 @@ class Trainer:
             # Zero gradients
             self.optimizer.zero_grad()
 
-            # Forward pass
-            if self.scaler is not None:
-                with autocast():
+            # Forward pass with gradient accumulation
+            if self.args.mixed_precision:
+                with autocast(dtype=self.amp_dtype):
                     outputs = self.model(images, return_uncertainty=True)
                     losses = self.criterion(outputs, targets)
-                    loss = losses['total_loss']
+                    loss = losses['total_loss'] / self.args.gradient_accumulation_steps
 
                 # Backward pass
-                self.scaler.scale(loss).backward()
-
-                # Gradient clipping
-                if self.args.gradient_clipping > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gradient_clipping)
-
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if self.scaler is not None:
+                    self.scaler.scale(loss).backward()
+                else:
+                    loss.backward()
             else:
                 outputs = self.model(images, return_uncertainty=True)
                 losses = self.criterion(outputs, targets)
-                loss = losses['total_loss']
-
-                # Backward pass
+                loss = losses['total_loss'] / self.args.gradient_accumulation_steps
                 loss.backward()
 
+            # Update weights every gradient_accumulation_steps
+            if (batch_idx + 1) % self.args.gradient_accumulation_steps == 0:
                 # Gradient clipping
                 if self.args.gradient_clipping > 0:
-                    nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gradient_clipping)
+                    if self.scaler is not None:
+                        self.scaler.unscale_(self.optimizer)
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gradient_clipping)
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gradient_clipping)
+                        self.optimizer.step()
+                else:
+                    if self.scaler is not None:
+                        self.scaler.step(self.optimizer)
+                        self.scaler.update()
+                    else:
+                        self.optimizer.step()
 
-                self.optimizer.step()
+                self.optimizer.zero_grad()
 
             # Track losses
             for key in epoch_losses:
@@ -267,8 +368,8 @@ class Trainer:
                 'lr': f"{self.optimizer.param_groups[0]['lr']:.2e}"
             })
 
-            # Log to W&B (every 50 steps)
-            if batch_idx % 50 == 0:
+            # Log to W&B (every 50 steps, only on rank 0)
+            if batch_idx % 50 == 0 and (self.rank == 0 or not self.is_distributed):
                 step = self.current_epoch * len(self.train_loader) + batch_idx
                 wandb.log({
                     'train/step_loss': loss.item(),
@@ -391,8 +492,9 @@ class Trainer:
             all_metrics = {**train_metrics, **val_metrics}
             all_metrics['epoch'] = epoch
 
-            # Log to W&B
-            wandb.log(all_metrics)
+            # Log to W&B (only on rank 0)
+            if self.rank == 0 or not self.is_distributed:
+                wandb.log(all_metrics)
 
             # Print epoch summary
             print(f"\nEpoch {epoch+1}/{self.args.epochs}:")
