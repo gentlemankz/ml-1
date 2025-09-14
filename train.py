@@ -504,7 +504,7 @@ class Trainer:
     def load_checkpoint(self, checkpoint_path):
         """Load model checkpoint"""
         print(f"📂 Loading checkpoint from {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -572,7 +572,7 @@ class Trainer:
             # Load best model
             best_checkpoint = self.save_dir / 'best_model.pth'
             if best_checkpoint.exists():
-                checkpoint = torch.load(best_checkpoint)
+                checkpoint = torch.load(best_checkpoint, weights_only=False)
                 self.model.load_state_dict(checkpoint['model_state_dict'])
 
             test_metrics = self.validate()  # Same as validation but with test data
