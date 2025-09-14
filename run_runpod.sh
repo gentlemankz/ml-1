@@ -143,6 +143,13 @@ print_status "Using $NUM_WORKERS workers for data loading"
 # Training command with multi-GPU support
 if [ $GPU_COUNT -gt 1 ]; then
     print_status "Starting multi-GPU training with $GPU_COUNT GPUs..."
+    # Check for existing checkpoint and resume if found
+    RESUME_ARG=""
+    if [ -f "checkpoints/latest_checkpoint.pth" ]; then
+        print_status "🔄 Found existing checkpoint, resuming training..."
+        RESUME_ARG="--resume checkpoints/latest_checkpoint.pth"
+    fi
+
     torchrun --nproc_per_node=$GPU_COUNT --nnodes=1 train.py \
         --model_name tf_efficientnetv2_s \
         --pretrained \
@@ -157,7 +164,8 @@ if [ $GPU_COUNT -gt 1 ]; then
         --gradient_accumulation_steps $GRAD_ACCUM \
         --use_compile \
         --wandb_project car-inspection-runpod-5090 \
-        --experiment_name "multi_gpu_${GPU_COUNT}x_$(date +%Y%m%d_%H%M%S)"
+        --experiment_name "multi_gpu_${GPU_COUNT}x_$(date +%Y%m%d_%H%M%S)" \
+        $RESUME_ARG
 else
     print_status "Starting single GPU training..."
     python3 train.py \
