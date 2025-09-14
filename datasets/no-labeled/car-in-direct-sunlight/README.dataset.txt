@@ -1,0 +1,1 @@
+7 images of clean car in direct-sunlight and 2 dirty cars in direct sunlight

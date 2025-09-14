@@ -1,0 +1,18 @@
+## 7 datasets from RoboFlow which I downloaded by COCO JSON.
+
+# 1. car scratch: 2 datasets: 1221 images.Classes(1):Scratch. (METRICS mAP@50 41.1% Precision 58.7% Recall 38.3%)
+# 2. car scratch and dent: 5 datasets: 235 images. (METRICS mAP@50 80.4% Precision 74.0% Recall 76.1%)
+# 3. car dent detection: 2 datasets: 11000 images. (CLASSES (17) Front-Windscreen-Damage Headlight-Damage Major-Rear-Bumper-Dent Rear-windscreen-Damage RunningBoard-Dent Sidemirror-Damage Signlight-Damage Taillight-Damage bonnet-dent doorouter-dent fender-dent front-bumper-dent medium-Bodypanel-Dent pillar-dent quaterpanel-dent rear-bumper-dent roof-dent)
+# 4. dirt car: 4 datasets: 336 images. (classes(2): clean, dirty). 
+# 5. dirt detection meter: 1 database, 169 images. CLASSES (10) Birdpoop background cars clean surface dirt dust glass puddle road wiper. 
+# 6. dirt finding: 3 datasets: 512 images. CLASSES (4) 0 clean dirt dirt-clean-areas(METRICS mAP@50 54.9% Precision 76.0% Recall 56.2%)
+# 7. rust and scratch: 1 datasets. 103 iamges. CLASSES (4) car dunt rust scracth.
+
+## My datasets: images:
+
+#1 car-in-direct-sunlight(7images(clean car), 2 images(dirty))
+#2 car-in-snow(4 images(clean car), 7 images(dirty))
+#3 car-on-overcast-day(3 clean images, 2 dirty)
+#4 after-the-rain (9 images of dirty cars)
+
+

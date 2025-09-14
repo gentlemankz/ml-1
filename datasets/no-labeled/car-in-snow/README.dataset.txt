@@ -1,0 +1,1 @@
+4 images of clean cars in snow and 7 images of dirty cars in snow

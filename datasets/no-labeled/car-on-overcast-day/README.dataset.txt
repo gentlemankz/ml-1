@@ -1,0 +1,1 @@
+3 images of clean car on overcast day and 2 dirty cars on overcast day
